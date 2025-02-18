@@ -27,3 +27,4 @@ resource "azurerm_storage_account" "main" {
     Managed_By  = "Terraform"
   }
 }
+

@@ -5,10 +5,9 @@ from python_terraform import Terraform
 @pytest.fixture(scope="session")
 def terraform_config():
     """Provides test configuration"""
-    # These values must match your Terraform variables
     return {
         "variables": {
-            "resource_group_name": "example-resources",  # Match your Terraform config
+            "resource_group_name": "example-resources",
             "location": "eastus",
             "environment": "test"
         }
@@ -17,7 +16,6 @@ def terraform_config():
 @pytest.fixture(scope="session")
 def tf():
     """Initialize Terraform"""
-    # Specify the path to your Terraform files
     tf = Terraform(working_dir="./terraform")
     tf.init()
     return tf
