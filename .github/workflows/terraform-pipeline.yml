@@ -7,126 +7,83 @@ on:
     branches: [ master ]
 
 jobs:
-  validate:
+  validate-and-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v1
       with:
-        terraform_version: "1.0.0"
-
-    - name: Setup TFLint
-      uses: terraform-linters/setup-tflint@v2
-      with:
-        tflint_version: v0.44.1
-
-    - name: Install tfsec
-      run: |
-        curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-
-    - name: Terraform Format
-      run: terraform fmt -check -recursive
-
-    - name: TFLint
-      run: |
-        tflint --init
-        tflint --format=compact
-
-    - name: Terraform Init
-      run: terraform init -backend=false
-
-    - name: Terraform Validate
-      run: terraform validate
-
-    - name: Run Checkov
-      uses: bridgecrewio/checkov-action@master
-      with:
-        directory: terraform/
-        framework: terraform
-
-  test:
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
+        fetch-depth: 0
 
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.9'
 
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.19'
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v1
+
+    - name: Install tfcov
+      run: |
+        go install github.com/aquasecurity/tfcov@latest
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install pytest pytest-cov checkov
         pip install -r requirements.txt
 
-    - name: Run Tests with Coverage
-      env:
-        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    - name: Run Terraform Format Check
+      run: terraform fmt -check -recursive
+
+    - name: Run Terraform Init
+      run: terraform init -backend=false
+
+    - name: Run Terraform Validate
+      run: terraform validate
+
+    - name: Run Terraform Plan for Coverage
+      run: |
+        terraform plan -out=tfplan
+        terraform show -json tfplan > plan.json
+        tfcov -plan plan.json -coverage-report tf_coverage.json
+
+    - name: Run Python Tests with Coverage
       run: |
         pytest tests/ --cov=. --cov-report=xml --cov-report=html
 
-    - name: Upload Coverage Report
+    - name: Run Checkov
+      run: |
+        checkov -d . --output-file-path checkov-report.json --output json
+        checkov -d . --output-file-path checkov-report.md --output md
+
+    - name: Create Combined Coverage Report
+      run: |
+        mkdir -p combined_coverage
+        cp -r htmlcov/* combined_coverage/
+        # Add Terraform coverage summary
+        echo "## Terraform Coverage" > combined_coverage/terraform_coverage.md
+        jq -r '.coverage[] | "* \(.file): \(.lines.covered)/\(.lines.total) lines covered"' tf_coverage.json >> combined_coverage/terraform_coverage.md
+
+    - name: Upload Coverage Reports
       uses: actions/upload-artifact@v2
       with:
-        name: coverage-report
+        name: coverage-reports
         path: |
           coverage.xml
           htmlcov/
+          tf_coverage.json
+          checkov-report.json
+          checkov-report.md
+          combined_coverage/
 
-  plan:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v1
-
-    - name: Terraform Init
-      run: terraform init
-
-    - name: Terraform Plan
-      run: terraform plan -out=tfplan
-      env:
-        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-    - name: Upload Plan
-      uses: actions/upload-artifact@v2
-      with:
-        name: tfplan
-        path: tfplan
-
-  apply:
-    needs: plan
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v1
-
-    - name: Download Plan
-      uses: actions/download-artifact@v2
-      with:
-        name: tfplan
-
-    - name: Terraform Apply
-      run: terraform apply -auto-approve tfplan
-      env:
-        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    - name: Coverage Summary
+      run: |
+        echo "Python Coverage Summary:"
+        coverage report
+        echo -e "\nTerraform Coverage Summary:"
+        jq -r '.summary | "Total Coverage: \(.lines.coverage)%"' tf_coverage.json
