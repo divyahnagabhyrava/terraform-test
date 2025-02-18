@@ -1,29 +1,32 @@
 import os
 import pytest
 from python_terraform import Terraform
-import subprocess
 
 @pytest.fixture(scope="session")
 def terraform_config():
+    """Provides test configuration"""
     return {
-        "root_path": "./terraform",
         "variables": {
-            "environment": "test",
             "resource_group_name": "rg-test-001",
-            "location": "eastus"
+            "location": "eastus",
+            "environment": "test"
         }
     }
 
 @pytest.fixture(scope="session")
 def tf():
-    tf = Terraform(working_dir="./terraform")
+    """Initialize Terraform"""
+    tf = Terraform()
+    tf.init()
     return tf
 
 @pytest.fixture(scope="session", autouse=True)
 def terraform_setup(tf, terraform_config):
-    # Initialize and apply Terraform
-    tf.init()
-    tf.apply(skip_plan=True, vars=terraform_config["variables"])
-    yield
-    # Cleanup
-    tf.destroy(auto_approve=True, vars=terraform_config["variables"])
+    """Apply Terraform and cleanup after tests"""
+    try:
+        # Apply the configuration
+        tf.apply(skip_plan=True, vars=terraform_config["variables"])
+        yield
+    finally:
+        # Cleanup after tests
+        tf.destroy(auto_approve=True, vars=terraform_config["variables"])
