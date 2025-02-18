@@ -17,23 +17,20 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.19'
-
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-
-    - name: Install tfcov
-      run: |
-        go install github.com/aquasecurity/tfcov@latest
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest-cov checkov
+        pip install pytest pytest-cov checkov pytest-terraform python-terraform
+        pip install azure-identity azure-mgmt-resource azure-mgmt-storage
         pip install -r requirements.txt
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
     - name: Run Terraform Format Check
       run: terraform fmt -check -recursive
@@ -44,27 +41,20 @@ jobs:
     - name: Run Terraform Validate
       run: terraform validate
 
-    - name: Run Terraform Plan for Coverage
+    - name: Run Integration Tests
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       run: |
-        terraform plan -out=tfplan
-        terraform show -json tfplan > plan.json
-        tfcov -plan plan.json -coverage-report tf_coverage.json
-
-    - name: Run Python Tests with Coverage
-      run: |
-        pytest tests/ --cov=. --cov-report=xml --cov-report=html
+        # Run pytest with terraform integration tests
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
 
     - name: Run Checkov
       run: |
         checkov -d . --output-file-path checkov-report.json --output json
         checkov -d . --output-file-path checkov-report.md --output md
-
-    - name: Create Combined Coverage Report
-      run: |
-        mkdir -p combined_coverage
-        cp -r htmlcov/* combined_coverage/
-        echo "## Terraform Coverage" > combined_coverage/terraform_coverage.md
-        jq -r '.coverage[] | "* \(.file): \(.lines.covered)/\(.lines.total) lines covered"' tf_coverage.json >> combined_coverage/terraform_coverage.md
 
     - name: Upload Coverage Reports
       uses: actions/upload-artifact@v4
@@ -73,14 +63,10 @@ jobs:
         path: |
           coverage.xml
           htmlcov/
-          tf_coverage.json
           checkov-report.json
           checkov-report.md
-          combined_coverage/
 
     - name: Coverage Summary
       run: |
         echo "Python Coverage Summary:"
         coverage report
-        echo -e "\nTerraform Coverage Summary:"
-        jq -r '.summary | "Total Coverage: \(.lines.coverage)%"' tf_coverage.json
