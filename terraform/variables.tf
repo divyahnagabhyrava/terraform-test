@@ -1,6 +1,7 @@
-variable "environment" {
+variable "resource_group_name" {
   type        = string
-  description = "Environment name"
+  description = "Resource group name"
+  default     = "example-resources"
 }
 
 variable "location" {
@@ -9,9 +10,10 @@ variable "location" {
   default     = "eastus"
 }
 
-variable "resource_group_name" {
+variable "environment" {
   type        = string
-  description = "Resource group name"
+  description = "Environment name"
+  default     = "test"
 }
 
 variable "subscription_id" {
